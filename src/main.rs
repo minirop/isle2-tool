@@ -44,7 +44,8 @@ fn compress(input: &str, output: &str) -> anyhow::Result<()> {
         let mut decoder = decoder.read_info(file)?;
 
         let palette = decoder.palette()?;
-        let mut palette_file = File::create(format!("{input}.pal"))?;
+        let input_pal = change_extension_to(input, "pal");
+        let mut palette_file = File::create(input_pal)?;
         for rgb in palette.chunks_exact(3) {
             let red = (((rgb[0] & 0b11111000) as u16) >> 3);
             let green = (((rgb[1] & 0b11111000) as u16) << 2);
@@ -192,8 +193,10 @@ fn decompress(input: &str, output: &str) -> anyhow::Result<()> {
         }
     }
 
-    if fs::exists(format!("{input}.pal"))? {
-        let palette = read_palette(format!("{input}.pal"))?;
+    let input_pal = change_extension_to(input, "pal");
+
+    if fs::exists(&input_pal)? {
+        let palette = read_palette(input_pal)?;
         let mut image = File::create(output)?;
         let mut encoder = Encoder::new(&mut image, 240, 160, &palette)?;
         let mut frame = Frame::default();
@@ -206,6 +209,14 @@ fn decompress(input: &str, output: &str) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn change_extension_to(filepath: &str, extension: &str) -> String {
+    if let Some(index) = filepath.rfind(".") {
+        format!("{}.{extension}", &filepath[..index])
+    } else {
+        todo!()
+    }
 }
 
 fn read_palette(buffer: String) -> anyhow::Result<Vec<u8>> {
