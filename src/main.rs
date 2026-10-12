@@ -37,6 +37,13 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn compress(input: &str, output: &str) -> anyhow::Result<()> {
+    let input_mtime = fs::metadata(input)?.modified()?;
+    let output_mtime = fs::metadata(output)?.modified()?;
+
+    if input_mtime < output_mtime {
+        return Ok(());
+    }
+
     let buffer = if input.ends_with(".gif") {
         let mut decoder = DecodeOptions::new();
         decoder.set_color_output(gif::ColorOutput::Indexed);
@@ -163,6 +170,13 @@ fn find_token_with_length(buffer: &Vec<u8>, offset: usize, length: usize) -> Opt
 }
 
 fn decompress(input: &str, output: &str) -> anyhow::Result<()> {
+    let input_mtime = fs::metadata(input)?.modified()?;
+    let output_mtime = fs::metadata(output)?.modified()?;
+
+    if input_mtime < output_mtime {
+        return Ok(());
+    }
+
     let mut file = File::open(input)?;
     let header = file.read_u8()?;
     assert_eq!(header, 0x10);
