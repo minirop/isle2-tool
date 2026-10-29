@@ -12,6 +12,7 @@ use gif::Frame;
 use std::borrow::Cow;
 use std::fs;
 use std::fs::File;
+use std::time::SystemTime;
 
 #[derive(Debug, Parser)]
 struct Args {
@@ -38,7 +39,11 @@ fn main() -> anyhow::Result<()> {
 
 fn compress(input: &str, output: &str) -> anyhow::Result<()> {
     let input_mtime = fs::metadata(input)?.modified()?;
-    let output_mtime = fs::metadata(output)?.modified()?;
+    let output_mtime = if let Ok(metadata) = fs::metadata(output) {
+        metadata.modified()?
+    } else {
+        SystemTime::UNIX_EPOCH
+    };
 
     if input_mtime < output_mtime {
         return Ok(());
@@ -56,8 +61,9 @@ fn compress(input: &str, output: &str) -> anyhow::Result<()> {
         for rgb in palette.chunks_exact(3) {
             let red = (((rgb[0] & 0b11111000) as u16) >> 3);
             let green = (((rgb[1] & 0b11111000) as u16) << 2);
-            let blue = (((rgb[2] & 0b11111100) as u16) << 8);
-            let color = red | green | blue;
+            let blue = (((rgb[2] & 0b11111000) as u16) << 7);
+            let alpha = ((rgb[2] & 1) as u16) << 15;
+            let color = red | green | blue | alpha;
             palette_file.write_u16::<LittleEndian>(color)?;
         }
 
@@ -171,7 +177,11 @@ fn find_token_with_length(buffer: &Vec<u8>, offset: usize, length: usize) -> Opt
 
 fn decompress(input: &str, output: &str) -> anyhow::Result<()> {
     let input_mtime = fs::metadata(input)?.modified()?;
-    let output_mtime = fs::metadata(output)?.modified()?;
+    let output_mtime = if let Ok(metadata) = fs::metadata(output) {
+        metadata.modified()?
+    } else {
+        SystemTime::UNIX_EPOCH
+    };
 
     if input_mtime < output_mtime {
         return Ok(());
@@ -240,7 +250,9 @@ fn read_palette(buffer: String) -> anyhow::Result<Vec<u8>> {
     while let Ok(color) = file.read_u16::<LittleEndian>() {
         let red = (color << 3) & 0b11111000;
         let green = (color >> 2) & 0b11111000;
-        let blue = (color >> 8) & 0b11111100;
+        let blue = (color >> 7) & 0b11111000;
+        let alpha = color >> 15;
+        let blue = blue | alpha;
 
         output.push(red as u8);
         output.push(green as u8);
