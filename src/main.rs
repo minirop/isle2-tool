@@ -1,4 +1,3 @@
-#![allow(unused)]
 use byteorder::BigEndian;
 use byteorder::LittleEndian;
 use byteorder::ReadBytesExt;
@@ -6,12 +5,16 @@ use byteorder::WriteBytesExt;
 use clap::Parser;
 use clap::Subcommand;
 use gif::DecodeOptions;
-use gif::Decoder;
 use gif::Encoder;
 use gif::Frame;
+use serde::Deserialize;
 use std::borrow::Cow;
+use std::env::temp_dir;
 use std::fs;
 use std::fs::File;
+use std::io::Read;
+use std::io::Seek;
+use std::io::Write;
 use std::time::SystemTime;
 
 #[derive(Debug, Parser)]
@@ -22,6 +25,8 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    // Extract and decompress multiple files from a binary
+    Extract { filename: String },
     // Compress a file with LZ77.
     Compress { input: String, output: String },
     // Decompress a file.
@@ -34,7 +39,59 @@ fn main() -> anyhow::Result<()> {
     match args.command {
         Commands::Compress { input, output } => compress(&input, &output),
         Commands::Decompress { input, output } => decompress(&input, &output),
+        Commands::Extract { filename } => extract(&filename),
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct Assets {
+    file: String,
+    assets: Vec<Asset>,
+}
+
+fn palette_size() -> usize {
+    512
+}
+
+#[derive(Debug, Deserialize)]
+struct Asset {
+    path: String,
+    pixels: u64,
+    size: usize,
+    palette: u64,
+    #[serde(default = "palette_size")]
+    palette_size: usize,
+}
+
+fn extract(filename: &str) -> anyhow::Result<()> {
+    let yaml = std::fs::read_to_string(filename)?;
+    let assets: Assets = yaml_serde::from_str(&yaml)?;
+    let mut file = File::open(assets.file)?;
+
+    let temp_path = temp_dir().into_os_string().into_string().unwrap();
+
+    for asset in assets.assets {
+        file.seek(std::io::SeekFrom::Start(asset.pixels))?;
+        let mut buffer = vec![0u8; asset.size as usize];
+        file.read(&mut buffer)?;
+
+        let mut gfx = File::create(format!("{temp_path}/tmp.gfx"))?;
+        gfx.write(&buffer)?;
+
+        file.seek(std::io::SeekFrom::Start(asset.palette))?;
+        let mut buffer = vec![0u8; asset.palette_size as usize];
+        file.read(&mut buffer)?;
+
+        let mut gfx = File::create(format!("{temp_path}/tmp.pal"))?;
+        gfx.write(&buffer)?;
+
+        decompress(
+            &format!("{temp_path}/tmp.gfx"),
+            &format!("{}.gif", asset.path),
+        )?;
+    }
+
+    Ok(())
 }
 
 fn compress(input: &str, output: &str) -> anyhow::Result<()> {
@@ -59,9 +116,9 @@ fn compress(input: &str, output: &str) -> anyhow::Result<()> {
         let input_pal = change_extension_to(input, "pal");
         let mut palette_file = File::create(input_pal)?;
         for rgb in palette.chunks_exact(3) {
-            let red = (((rgb[0] & 0b11111000) as u16) >> 3);
-            let green = (((rgb[1] & 0b11111000) as u16) << 2);
-            let blue = (((rgb[2] & 0b11111000) as u16) << 7);
+            let red = ((rgb[0] & 0b11111000) as u16) >> 3;
+            let green = ((rgb[1] & 0b11111000) as u16) << 2;
+            let blue = ((rgb[2] & 0b11111000) as u16) << 7;
             let alpha = ((rgb[2] & 1) as u16) << 15;
             let color = red | green | blue | alpha;
             palette_file.write_u16::<LittleEndian>(color)?;
@@ -81,14 +138,12 @@ fn compress(input: &str, output: &str) -> anyhow::Result<()> {
     let mut num_flag_bits = 0;
     let mut dst_buffer = vec![];
     let mut last_flag_position = 0;
-    let mut last_flag_input_position = 0;
     let mut flags = 0u8;
 
     while processed_bytes < buffer.len() {
         if num_flag_bits == 0 {
             last_flag_position = dst_buffer.len();
             dst_buffer.push(0x37u8);
-            last_flag_input_position = processed_bytes;
         }
 
         if find_token_with_length(&buffer, processed_bytes, 3).is_some() {
@@ -111,7 +166,7 @@ fn compress(input: &str, output: &str) -> anyhow::Result<()> {
             dst_buffer.push(byte);
             dst_buffer.push((token_delta & 0xFF) as u8);
             processed_bytes += token_size;
-            flags |= (0x80 >> num_flag_bits);
+            flags |= 0x80 >> num_flag_bits;
         } else {
             dst_buffer.push(buffer[processed_bytes]);
             processed_bytes += 1;
@@ -207,7 +262,7 @@ fn decompress(input: &str, output: &str) -> anyhow::Result<()> {
                 let value = file.read_u16::<BigEndian>()?;
                 let disp = value & 0x0FFF;
                 let n = (value >> 12) as u8;
-                for j in 0..(n + 3) {
+                for _ in 0..(n + 3) {
                     let v = buffer[buffer.len() - disp as usize - 1];
                     buffer.push(v);
                 }
@@ -221,6 +276,7 @@ fn decompress(input: &str, output: &str) -> anyhow::Result<()> {
 
     if fs::exists(&input_pal)? {
         let palette = read_palette(input_pal)?;
+        create_path_for(output)?;
         let mut image = File::create(output)?;
         let mut encoder = Encoder::new(&mut image, 240, 160, &palette)?;
         let mut frame = Frame::default();
@@ -260,4 +316,13 @@ fn read_palette(buffer: String) -> anyhow::Result<Vec<u8>> {
     }
 
     Ok(output)
+}
+
+fn create_path_for(filepath: &str) -> anyhow::Result<()> {
+    if let Some(index) = filepath.rfind("/") {
+        let new_path = &filepath[..index];
+        fs::create_dir_all(new_path)?;
+    }
+
+    Ok(())
 }
