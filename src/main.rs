@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
 
     match args.command {
         Commands::Compress { input, output } => compress(&input, &output),
-        Commands::Decompress { input, output } => decompress(&input, &output),
+        Commands::Decompress { input, output } => decompress(&input, &output, 240),
         Commands::Extract { filename } => extract(&filename),
     }
 }
@@ -53,6 +53,10 @@ fn palette_size() -> usize {
     512
 }
 
+fn width_size() -> usize {
+    240
+}
+
 #[derive(Debug, Deserialize)]
 struct Asset {
     path: String,
@@ -61,6 +65,8 @@ struct Asset {
     palette: u64,
     #[serde(default = "palette_size")]
     palette_size: usize,
+    #[serde(default = "width_size")]
+    width: usize,
 }
 
 fn extract(filename: &str) -> anyhow::Result<()> {
@@ -88,6 +94,7 @@ fn extract(filename: &str) -> anyhow::Result<()> {
         decompress(
             &format!("{temp_path}/tmp.gfx"),
             &format!("{}.gif", asset.path),
+            asset.width,
         )?;
     }
 
@@ -230,7 +237,7 @@ fn find_token_with_length(buffer: &Vec<u8>, offset: usize, length: usize) -> Opt
     None
 }
 
-fn decompress(input: &str, output: &str) -> anyhow::Result<()> {
+fn decompress(input: &str, output: &str, width: usize) -> anyhow::Result<()> {
     let input_mtime = fs::metadata(input)?.modified()?;
     let output_mtime = if let Ok(metadata) = fs::metadata(output) {
         metadata.modified()?
@@ -275,13 +282,14 @@ fn decompress(input: &str, output: &str) -> anyhow::Result<()> {
     let input_pal = change_extension_to(input, "pal");
 
     if fs::exists(&input_pal)? {
+        let height = (buffer.len() / width) as u16;
         let palette = read_palette(input_pal)?;
         create_path_for(output)?;
         let mut image = File::create(output)?;
-        let mut encoder = Encoder::new(&mut image, 240, 160, &palette)?;
+        let mut encoder = Encoder::new(&mut image, width as u16, height, &palette)?;
         let mut frame = Frame::default();
-        frame.width = 240;
-        frame.height = 160;
+        frame.width = width as u16;
+        frame.height = height;
         frame.buffer = Cow::Borrowed(&*buffer);
         encoder.write_frame(&frame).unwrap();
     } else {
