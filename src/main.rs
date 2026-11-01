@@ -78,6 +78,14 @@ fn extract(filename: &str) -> anyhow::Result<()> {
     let temp_path = temp_dir().into_os_string().into_string().unwrap();
 
     for asset in assets.assets {
+        let output_filename = format!("{}.gif", asset.path);
+
+        if let Ok(exists) = fs::exists(&output_filename) {
+            if exists {
+                continue;
+            }
+        }
+
         file.seek(std::io::SeekFrom::Start(asset.pixels))?;
         let mut buffer = vec![0u8; asset.size as usize];
         file.read(&mut buffer)?;
@@ -94,7 +102,7 @@ fn extract(filename: &str) -> anyhow::Result<()> {
 
         decompress(
             &format!("{temp_path}/tmp.gfx"),
-            &format!("{}.gif", asset.path),
+            &output_filename,
             asset.width,
         )?;
     }
