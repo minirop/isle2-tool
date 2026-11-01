@@ -7,6 +7,7 @@ use clap::Subcommand;
 use gif::DecodeOptions;
 use gif::Encoder;
 use gif::Frame;
+use gif::Repeat;
 use serde::Deserialize;
 use std::borrow::Cow;
 use std::env::temp_dir;
@@ -120,8 +121,18 @@ fn compress(input: &str, output: &str) -> anyhow::Result<()> {
         let mut decoder = decoder.read_info(file)?;
 
         let palette = decoder.palette()?;
-        let input_pal = change_extension_to(input, "pal");
-        let mut palette_file = File::create(input_pal)?;
+        let palette = match decoder.repeat() {
+            Repeat::Finite(count) => {
+                if count > 0 {
+                    palette[..(count as usize)].to_vec()
+                } else {
+                    palette.to_vec()
+                }
+            }
+            Repeat::Infinite => todo!(),
+        };
+        let output_pal = change_extension_to(output, "pal");
+        let mut palette_file = File::create(output_pal)?;
         for rgb in palette.chunks_exact(3) {
             let red = ((rgb[0] & 0b11111000) as u16) >> 3;
             let green = ((rgb[1] & 0b11111000) as u16) << 2;
@@ -284,9 +295,15 @@ fn decompress(input: &str, output: &str, width: usize) -> anyhow::Result<()> {
     if fs::exists(&input_pal)? {
         let height = (buffer.len() / width) as u16;
         let palette = read_palette(input_pal)?;
+        let palette_size = palette.len();
         create_path_for(output)?;
         let mut image = File::create(output)?;
         let mut encoder = Encoder::new(&mut image, width as u16, height, &palette)?;
+
+        if palette_size != 256 * 3 {
+            encoder.set_repeat(Repeat::Finite(palette_size as u16))?;
+        }
+
         let mut frame = Frame::default();
         frame.width = width as u16;
         frame.height = height;
