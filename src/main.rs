@@ -212,7 +212,7 @@ fn find_token_with_length(buffer: &Vec<u8>, offset: usize, length: usize) -> Opt
     let mut starting_point = offset - 8;
     loop {
         let delta = starting_point.abs_diff(offset) as u16;
-        if delta > 0xFFF {
+        if delta > 0x1000 {
             return None;
         }
 
